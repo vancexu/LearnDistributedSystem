@@ -1,10 +1,14 @@
 package mr
 
-import "fmt"
-import "log"
-import "net/rpc"
-import "hash/fnv"
-
+import (
+	"encoding/json"
+	"fmt"
+	"hash/fnv"
+	"io/ioutil"
+	"log"
+	"net/rpc"
+	"os"
+)
 
 //
 // Map functions return a slice of KeyValue.
@@ -24,7 +28,6 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-
 //
 // main/mrworker.go calls this function.
 //
@@ -36,6 +39,56 @@ func Worker(mapf func(string, string) []KeyValue,
 	// uncomment to send the Example RPC to the master.
 	// CallExample()
 
+	request := GetTaskRequest{}
+	response := GetTaskResponse{}
+	call("Master.GetTask", &request, &response)
+
+	fmt.Println("getTask: ", response.TaskType, response.Filename)
+	if response.TaskType == TaskTypeMap {
+		executeMap(&response, mapf)
+	} else if response.TaskType == TaskTypeReduce {
+		executeReduce(reducef)
+	}
+
+}
+
+func executeMap(resp *GetTaskResponse, mapf func(string, string) []KeyValue) {
+	filename := resp.Filename
+	nReduce := resp.NReduce
+	taskID := resp.TaskID
+
+	intermediate := make(map[int][]KeyValue)
+
+	file, err := os.Open(filename)
+	if err != nil {
+		log.Fatalf("cannot open %v", filename)
+	}
+	content, err := ioutil.ReadAll(file)
+	if err != nil {
+		log.Fatalf("cannot read %v", filename)
+	}
+	file.Close()
+	kva := mapf(filename, string(content))
+	for _, kv := range kva {
+		bucket := ihash(kv.Key) % nReduce
+		intermediate[bucket] = append(intermediate[bucket], kv)
+	}
+	// output to disk
+	for key, val := range intermediate {
+		ofileName := fmt.Sprintf("mr-%d-%d", taskID, key)
+		ofile, err := json.MarshalIndent(val, "", " ")
+		if err != nil {
+			log.Fatalf("cannot marshall content %v: %v", key, val)
+		}
+		err = ioutil.WriteFile(ofileName, ofile, 0644)
+		if err != nil {
+			log.Fatalf("cannot write to file %v", ofile)
+		}
+	}
+}
+
+func executeReduce(reducef func(string, []string) string) {
+	// if
 }
 
 //

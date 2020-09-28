@@ -1,18 +1,54 @@
 package mr
 
-import "log"
-import "net"
-import "os"
-import "net/rpc"
-import "net/http"
+import (
+	"log"
+	"net"
+	"net/http"
+	"net/rpc"
+	"os"
+	"sync"
+)
 
+type State int
+
+type Task struct {
+	State    State
+	Filename string
+}
+
+const (
+	TaskStateIdle State = iota
+	TaskStateClaimed
+	TaskStateCompleted
+)
 
 type Master struct {
 	// Your definitions here.
-
+	mu           sync.Mutex
+	mapTasks     map[int]*Task
+	curMapTaskID int
+	nReduce      int
 }
 
 // Your code here -- RPC handlers for the worker to call.
+
+// GetTask API for worker to get task
+func (m *Master) GetTask(request *GetTaskRequest, response *GetTaskResponse) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for taskID, task := range m.mapTasks {
+		if task.State == TaskStateIdle {
+			response.TaskType = TaskTypeMap
+			response.TaskID = taskID
+			response.Filename = task.Filename
+			response.NReduce = m.nReduce
+			// go checkWorker()
+			return nil
+		}
+	}
+
+	return nil
+}
 
 //
 // an example RPC handler.
@@ -23,7 +59,6 @@ func (m *Master) Example(args *ExampleArgs, reply *ExampleReply) error {
 	reply.Y = args.X + 1
 	return nil
 }
-
 
 //
 // start a thread that listens for RPCs from worker.go
@@ -50,7 +85,6 @@ func (m *Master) Done() bool {
 
 	// Your code here.
 
-
 	return ret
 }
 
@@ -63,7 +97,18 @@ func MakeMaster(files []string, nReduce int) *Master {
 	m := Master{}
 
 	// Your code here.
-
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.curMapTaskID = 0
+	m.mapTasks = make(map[int]*Task)
+	m.nReduce = nReduce
+	for _, file := range files {
+		m.mapTasks[m.curMapTaskID] = &Task{
+			State:    TaskStateIdle,
+			Filename: file,
+		}
+		m.curMapTaskID++
+	}
 
 	m.server()
 	return &m
