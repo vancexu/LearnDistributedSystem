@@ -9,6 +9,7 @@ import (
 	"net/rpc"
 	"os"
 	"sort"
+	"time"
 )
 
 //
@@ -40,24 +41,32 @@ func Worker(mapf func(string, string) []KeyValue,
 	// uncomment to send the Example RPC to the master.
 	// CallExample()
 
-	request := GetTaskRequest{}
-	response := GetTaskResponse{}
-	call("Master.GetTask", &request, &response)
+	for {
+		request := GetTaskRequest{}
+		response := GetTaskResponse{}
+		isServerAlive := call("Master.GetTask", &request, &response)
+		if !isServerAlive {
+			break
+		}
 
-	fmt.Println("getTask: ", response.TaskType, response.Filename)
-	if response.TaskType == TaskTypeMap {
-		executeMap(&response, mapf)
-	} else if response.TaskType == TaskTypeReduce {
-		executeReduce(&response, reducef)
-	}
+		fmt.Println("getTask: ", response.TaskType, response.Filename)
+		if response.TaskType == TaskTypeMap {
+			executeMap(&response, mapf)
+		} else if response.TaskType == TaskTypeReduce {
+			executeReduce(&response, reducef)
+		} else if response.TaskType == TaskTypeNoTask {
+			time.Sleep(3 * time.Second)
+			continue
+		}
 
-	compRequest := CompleteTaskRequest{
-		TaskType: response.TaskType,
-		TaskID:   response.TaskID,
+		compRequest := CompleteTaskRequest{
+			TaskType: response.TaskType,
+			TaskID:   response.TaskID,
+		}
+		compResponse := CompleteTaskResponse{}
+		call("Master.CompleteTask", &compRequest, &compResponse)
+		fmt.Println("completeTask: ", compRequest.TaskType, compRequest.TaskID)
 	}
-	compResponse := CompleteTaskResponse{}
-	call("Master.CompleteTask", &compRequest, &compResponse)
-	fmt.Println("completeTask: ", compRequest.TaskType, compRequest.TaskID)
 }
 
 func executeMap(resp *GetTaskResponse, mapf func(string, string) []KeyValue) {

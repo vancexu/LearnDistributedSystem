@@ -7,6 +7,7 @@ import (
 	"net/rpc"
 	"os"
 	"sync"
+	"time"
 )
 
 type State int
@@ -46,8 +47,9 @@ func (m *Master) GetTask(request *GetTaskRequest, response *GetTaskResponse) err
 			response.TaskID = taskID
 			response.Filename = task.Filename
 			response.NReduce = m.nReduce
-			// go checkWorker()
+
 			task.State = TaskStateClaimed
+			go m.checkWorkerCrash(taskID, TaskTypeMap)
 			return nil
 		}
 		if task.State != TaskStateCompleted {
@@ -68,13 +70,35 @@ func (m *Master) GetTask(request *GetTaskRequest, response *GetTaskResponse) err
 				response.MapTaskIDs = mapTaskIDs
 
 				task.State = TaskStateClaimed
+				go m.checkWorkerCrash(taskID, TaskTypeReduce)
 				return nil
 			}
 		}
 
 	}
 
+	response.TaskType = TaskTypeNoTask
 	return nil
+}
+
+func (m *Master) checkWorkerCrash(taskID int, taskType TaskType) {
+	time.Sleep(10 * time.Second)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if taskType == TaskTypeMap {
+		if m.mapTasks[taskID].State != TaskStateCompleted {
+			m.mapTasks[m.curMapTaskID] = m.mapTasks[taskID]
+			m.curMapTaskID++
+			delete(m.mapTasks, taskID)
+		}
+	} else if taskType == TaskTypeReduce {
+		if m.reduceTasks[taskID].State != TaskStateCompleted {
+			m.reduceTasks[m.curReduceTaskID] = m.reduceTasks[taskID]
+			m.curReduceTaskID++
+			delete(m.reduceTasks, taskID)
+		}
+	}
 }
 
 // CompleteTask API for complete task
@@ -123,9 +147,17 @@ func (m *Master) server() {
 // if the entire job has finished.
 //
 func (m *Master) Done() bool {
-	ret := false
+	ret := true
 
 	// Your code here.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, task := range m.reduceTasks {
+		if task.State != TaskStateCompleted {
+			return false
+		}
+	}
 
 	return ret
 }
@@ -151,16 +183,16 @@ func MakeMaster(files []string, nReduce int) *Master {
 			Filename: file,
 		}
 		m.curMapTaskID++
-		break // todo remove
+		// break // todo remove
 	}
 	m.curReduceTaskID = 0
 	m.reduceTasks = make(map[int]*Task)
-	for m.curMapTaskID < nReduce {
+	for m.curReduceTaskID < nReduce {
 		m.reduceTasks[m.curReduceTaskID] = &Task{
 			State: TaskStateIdle,
 		}
 		m.curReduceTaskID++
-		break // todo remove
+		// break // todo remove
 	}
 
 	m.server()
