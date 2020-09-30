@@ -51,6 +51,13 @@ func Worker(mapf func(string, string) []KeyValue,
 		executeReduce(&response, reducef)
 	}
 
+	compRequest := CompleteTaskRequest{
+		TaskType: response.TaskType,
+		TaskID:   response.TaskID,
+	}
+	compResponse := CompleteTaskResponse{}
+	call("Master.CompleteTask", &compRequest, &compResponse)
+	fmt.Println("completeTask: ", compRequest.TaskType, compRequest.TaskID)
 }
 
 func executeMap(resp *GetTaskResponse, mapf func(string, string) []KeyValue) {

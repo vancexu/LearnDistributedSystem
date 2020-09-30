@@ -38,6 +38,7 @@ type Master struct {
 func (m *Master) GetTask(request *GetTaskRequest, response *GetTaskResponse) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	areMapTasksCompleted := true
 	for taskID, task := range m.mapTasks {
 		if task.State == TaskStateIdle {
@@ -73,6 +74,21 @@ func (m *Master) GetTask(request *GetTaskRequest, response *GetTaskResponse) err
 
 	}
 
+	return nil
+}
+
+// CompleteTask API for complete task
+func (m *Master) CompleteTask(request *CompleteTaskRequest, response *CompleteTaskResponse) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	taskID := request.TaskID
+	taskType := request.TaskType
+	if taskType == TaskTypeMap {
+		m.mapTasks[taskID].State = TaskStateCompleted
+	} else if taskType == TaskTypeReduce {
+		m.reduceTasks[taskID].State = TaskStateCompleted
+	}
 	return nil
 }
 
@@ -135,7 +151,7 @@ func MakeMaster(files []string, nReduce int) *Master {
 			Filename: file,
 		}
 		m.curMapTaskID++
-		break
+		break // todo remove
 	}
 	m.curReduceTaskID = 0
 	m.reduceTasks = make(map[int]*Task)
@@ -144,7 +160,7 @@ func MakeMaster(files []string, nReduce int) *Master {
 			State: TaskStateIdle,
 		}
 		m.curReduceTaskID++
-		break
+		break // todo remove
 	}
 
 	m.server()
