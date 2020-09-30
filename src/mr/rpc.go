@@ -42,6 +42,7 @@ type GetTaskResponse struct {
 	TaskID int
 	Filename string
 	NReduce int
+	MapTaskIDs []int
 }
 
 

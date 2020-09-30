@@ -24,10 +24,12 @@ const (
 
 type Master struct {
 	// Your definitions here.
-	mu           sync.Mutex
-	mapTasks     map[int]*Task
-	curMapTaskID int
-	nReduce      int
+	mu              sync.Mutex
+	mapTasks        map[int]*Task
+	curMapTaskID    int
+	nReduce         int
+	reduceTasks     map[int]*Task
+	curReduceTaskID int
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -36,6 +38,7 @@ type Master struct {
 func (m *Master) GetTask(request *GetTaskRequest, response *GetTaskResponse) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	areMapTasksCompleted := true
 	for taskID, task := range m.mapTasks {
 		if task.State == TaskStateIdle {
 			response.TaskType = TaskTypeMap
@@ -43,8 +46,31 @@ func (m *Master) GetTask(request *GetTaskRequest, response *GetTaskResponse) err
 			response.Filename = task.Filename
 			response.NReduce = m.nReduce
 			// go checkWorker()
+			task.State = TaskStateClaimed
 			return nil
 		}
+		if task.State != TaskStateCompleted {
+			areMapTasksCompleted = false
+		}
+	}
+
+	if areMapTasksCompleted { // schedule reduce task
+		var mapTaskIDs []int
+		for taskID := range m.mapTasks {
+			mapTaskIDs = append(mapTaskIDs, taskID)
+		}
+
+		for taskID, task := range m.reduceTasks {
+			if task.State == TaskStateIdle {
+				response.TaskType = TaskTypeReduce
+				response.TaskID = taskID
+				response.MapTaskIDs = mapTaskIDs
+
+				task.State = TaskStateClaimed
+				return nil
+			}
+		}
+
 	}
 
 	return nil
@@ -99,6 +125,7 @@ func MakeMaster(files []string, nReduce int) *Master {
 	// Your code here.
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.curMapTaskID = 0
 	m.mapTasks = make(map[int]*Task)
 	m.nReduce = nReduce
@@ -108,6 +135,16 @@ func MakeMaster(files []string, nReduce int) *Master {
 			Filename: file,
 		}
 		m.curMapTaskID++
+		break
+	}
+	m.curReduceTaskID = 0
+	m.reduceTasks = make(map[int]*Task)
+	for m.curMapTaskID < nReduce {
+		m.reduceTasks[m.curReduceTaskID] = &Task{
+			State: TaskStateIdle,
+		}
+		m.curReduceTaskID++
+		break
 	}
 
 	m.server()

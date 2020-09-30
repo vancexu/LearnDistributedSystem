@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/rpc"
 	"os"
+	"sort"
 )
 
 //
@@ -47,7 +48,7 @@ func Worker(mapf func(string, string) []KeyValue,
 	if response.TaskType == TaskTypeMap {
 		executeMap(&response, mapf)
 	} else if response.TaskType == TaskTypeReduce {
-		executeReduce(reducef)
+		executeReduce(&response, reducef)
 	}
 
 }
@@ -75,7 +76,7 @@ func executeMap(resp *GetTaskResponse, mapf func(string, string) []KeyValue) {
 	}
 	// output to disk
 	for key, val := range intermediate {
-		ofileName := fmt.Sprintf("mr-%d-%d", taskID, key)
+		ofileName := getFilename(taskID, key)
 		ofile, err := json.MarshalIndent(val, "", " ")
 		if err != nil {
 			log.Fatalf("cannot marshall content %v: %v", key, val)
@@ -87,8 +88,61 @@ func executeMap(resp *GetTaskResponse, mapf func(string, string) []KeyValue) {
 	}
 }
 
-func executeReduce(reducef func(string, []string) string) {
-	// if
+func getFilename(mapTaskID, reduceTaskID int) string {
+	return fmt.Sprintf("mr-%d-%d", mapTaskID, reduceTaskID)
+}
+
+// for sorting by key.
+type ByKey []KeyValue
+
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
+
+func executeReduce(resp *GetTaskResponse, reducef func(string, []string) string) {
+	taskID := resp.TaskID
+	mapTaskIDs := resp.MapTaskIDs
+
+	var intermediate []KeyValue
+	for _, mapTaskID := range mapTaskIDs {
+		filename := getFilename(mapTaskID, taskID)
+		file, err := ioutil.ReadFile(filename)
+		if err != nil {
+			log.Fatalf("cannot read file %v", filename)
+		}
+		var data []KeyValue
+		err = json.Unmarshal([]byte(file), &data)
+		if err != nil {
+			log.Fatalf("cannot unmarshall content for file %v: %v", filename, data)
+		}
+		intermediate = append(intermediate, data...)
+	}
+
+	sort.Sort(ByKey(intermediate))
+	oname := fmt.Sprintf("mr-out-%d", taskID)
+	ofile, err := os.Create(oname)
+	if err != nil {
+		log.Fatalf("cannot write file %v", oname)
+	}
+
+	i := 0
+	for i < len(intermediate) {
+		j := i + 1
+		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+			j++
+		}
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, intermediate[k].Value)
+		}
+		output := reducef(intermediate[i].Key, values)
+
+		// this is the correct format for each line of Reduce output.
+		fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+
+		i = j
+	}
 }
 
 //
