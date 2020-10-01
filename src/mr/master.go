@@ -25,12 +25,12 @@ const (
 
 type Master struct {
 	// Your definitions here.
-	mu              sync.Mutex
-	mapTasks        map[int]*Task
-	curMapTaskID    int
-	nReduce         int
-	reduceTasks     map[int]*Task
-	curReduceTaskID int
+	mu             sync.Mutex
+	mapTasks       map[int]*Task
+	curMapTaskID   int
+	nReduce        int
+	reduceTasks    map[int]*Task
+	numMapComplete int
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -40,24 +40,21 @@ func (m *Master) GetTask(request *GetTaskRequest, response *GetTaskResponse) err
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	areMapTasksCompleted := true
-	for taskID, task := range m.mapTasks {
-		if task.State == TaskStateIdle {
-			response.TaskType = TaskTypeMap
-			response.TaskID = taskID
-			response.Filename = task.Filename
-			response.NReduce = m.nReduce
+	if m.numMapComplete < len(m.mapTasks) {
+		for taskID, task := range m.mapTasks {
+			if task.State == TaskStateIdle {
+				response.TaskType = TaskTypeMap
+				response.TaskID = taskID
+				response.Filename = task.Filename
+				response.NReduce = m.nReduce
 
-			task.State = TaskStateClaimed
-			go m.checkWorkerCrash(taskID, TaskTypeMap)
-			return nil
+				task.State = TaskStateClaimed
+				// fmt.Println("checking worker crash ", taskID, TaskTypeMap)
+				go m.checkWorkerCrash(taskID, TaskTypeMap)
+				return nil
+			}
 		}
-		if task.State != TaskStateCompleted {
-			areMapTasksCompleted = false
-		}
-	}
-
-	if areMapTasksCompleted { // schedule reduce task
+	} else {
 		var mapTaskIDs []int
 		for taskID := range m.mapTasks {
 			mapTaskIDs = append(mapTaskIDs, taskID)
@@ -70,11 +67,11 @@ func (m *Master) GetTask(request *GetTaskRequest, response *GetTaskResponse) err
 				response.MapTaskIDs = mapTaskIDs
 
 				task.State = TaskStateClaimed
+				// fmt.Println("checking worker crash ", taskID, TaskTypeMap)
 				go m.checkWorkerCrash(taskID, TaskTypeReduce)
 				return nil
 			}
 		}
-
 	}
 
 	response.TaskType = TaskTypeNoTask
@@ -87,18 +84,20 @@ func (m *Master) checkWorkerCrash(taskID int, taskType TaskType) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if taskType == TaskTypeMap {
-		if m.mapTasks[taskID].State != TaskStateCompleted {
-			m.mapTasks[m.curMapTaskID] = m.mapTasks[taskID]
+		if m.mapTasks[taskID].State == TaskStateClaimed {
+			m.mapTasks[m.curMapTaskID] = &Task{
+				State:    TaskStateIdle,
+				Filename: m.mapTasks[taskID].Filename,
+			}
 			m.curMapTaskID++
 			delete(m.mapTasks, taskID)
 		}
 	} else if taskType == TaskTypeReduce {
-		if m.reduceTasks[taskID].State != TaskStateCompleted {
-			m.reduceTasks[m.curReduceTaskID] = m.reduceTasks[taskID]
-			m.curReduceTaskID++
-			delete(m.reduceTasks, taskID)
+		if m.reduceTasks[taskID].State == TaskStateClaimed {
+			m.reduceTasks[taskID].State = TaskStateIdle
 		}
 	}
+	// fmt.Println("worker checked ", taskID, taskType)
 }
 
 // CompleteTask API for complete task
@@ -109,8 +108,15 @@ func (m *Master) CompleteTask(request *CompleteTaskRequest, response *CompleteTa
 	taskID := request.TaskID
 	taskType := request.TaskType
 	if taskType == TaskTypeMap {
+		if _, ok := m.mapTasks[taskID]; !ok {
+			return nil
+		}
 		m.mapTasks[taskID].State = TaskStateCompleted
+		m.numMapComplete++
 	} else if taskType == TaskTypeReduce {
+		if _, ok := m.reduceTasks[taskID]; !ok {
+			return nil
+		}
 		m.reduceTasks[taskID].State = TaskStateCompleted
 	}
 	return nil
@@ -183,17 +189,14 @@ func MakeMaster(files []string, nReduce int) *Master {
 			Filename: file,
 		}
 		m.curMapTaskID++
-		// break // todo remove
 	}
-	m.curReduceTaskID = 0
 	m.reduceTasks = make(map[int]*Task)
-	for m.curReduceTaskID < nReduce {
-		m.reduceTasks[m.curReduceTaskID] = &Task{
+	for i := 0; i < nReduce; i++ {
+		m.reduceTasks[i] = &Task{
 			State: TaskStateIdle,
 		}
-		m.curReduceTaskID++
-		// break // todo remove
 	}
+	m.numMapComplete = 0
 
 	m.server()
 	return &m

@@ -49,13 +49,13 @@ func Worker(mapf func(string, string) []KeyValue,
 			break
 		}
 
-		fmt.Println("getTask: ", response.TaskType, response.Filename)
+		// fmt.Println("getTask: ", response.TaskType, response.Filename)
 		if response.TaskType == TaskTypeMap {
 			executeMap(&response, mapf)
 		} else if response.TaskType == TaskTypeReduce {
 			executeReduce(&response, reducef)
 		} else if response.TaskType == TaskTypeNoTask {
-			time.Sleep(3 * time.Second)
+			time.Sleep(6 * time.Second)
 			continue
 		}
 
@@ -65,7 +65,7 @@ func Worker(mapf func(string, string) []KeyValue,
 		}
 		compResponse := CompleteTaskResponse{}
 		call("Master.CompleteTask", &compRequest, &compResponse)
-		fmt.Println("completeTask: ", compRequest.TaskType, compRequest.TaskID)
+		// fmt.Println("completeTask: ", compRequest.TaskID, compRequest.TaskType)
 	}
 }
 
@@ -123,6 +123,12 @@ func executeReduce(resp *GetTaskResponse, reducef func(string, []string) string)
 	var intermediate []KeyValue
 	for _, mapTaskID := range mapTaskIDs {
 		filename := getFilename(mapTaskID, taskID)
+
+		_, err := os.Stat(filename)
+		if os.IsNotExist(err) {
+			return // skip cannot read error
+		}
+
 		file, err := ioutil.ReadFile(filename)
 		if err != nil {
 			log.Fatalf("cannot read file %v", filename)
